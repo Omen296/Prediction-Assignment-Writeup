@@ -1,0 +1,224 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Diego Ignacio Rivera Lisboa"
+date: "6/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Summary
+
+For this assignment, using the provided Data Set, after reducing the number of features through both correlation and the rfe function, we train a random forest model with 20 features, arriving a model that shows 0.95 accuracy on the test set. In terms of cross-validarion, both the rfe and the "rf" method in the caret package already involve their own forms of cross-validation. Besides this, the training data set was split unto another training and test set to properly test out of sample error.
+
+## Characteristics of the Data Set
+
+The provided data set (Velloso et al, 2013) comes from human activity recognition research, in particular, the effort to discriminate between different types of activities. As such, 6 subjects were asked to do 10 repetitions of Dumbbell Biceps Curls in 5 different ways, one correct, and the other four incorrect in different ways. 
+
+The data was produced with a set of different sensors ubicated on the body of the subjects and the dumbells. 
+
+Overall, the full set is comprised of 19642 observations of 160 variables. 
+
+## Data  Processing
+
+The data already comes split between a training and test data set, which is comprised of only 20 observations. We will disregard the test data set, leaving it as a sort of validation set in the Quiz (which will not be reported here). And so, we will split the training set into a training and test portion in a 4/5 proportion to be able to test out-of-sample error.
+
+In general terms, the training data set will be comprised of 15699 observations and the testing set of 3923 observations. In terms of overall sampling, the training data set is composed of:
+
+```{r message=FALSE}
+
+#The code to obtain the data set
+trainURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(trainURL, destfile="./pml-training.csv", method="curl")
+download.file(testURL, destfile="./pml-testing.csv", method="curl")
+
+#Splitting
+set.seed(32678)
+library(caret)
+set1<-read.csv("pml-training.csv", header=T, na.strings=c("","NA"), stringsAsFactors = FALSE) 
+validation<-read.csv("pml-testing.csv", header=T, na.strings=c("","NA"), stringsAsFactors = FALSE)
+inTrain<-createDataPartition(y=set1$classe, p=0.8, list=FALSE)
+training<-set1[inTrain,]
+testing<-set1[-inTrain,]
+
+#Exploratory Analysis
+table(training$classe)
+```
+
+And in terms of subjects:
+
+```{r}
+table(training$user_name)
+```
+
+A coursory inspection of a lot of variables show that they posses a large number of NA values. I will suppose that this NA values correspond to having no measure to record in the sensors, and so will be transformed to 0.
+
+Then, 160 variables are far too much variables to process comfortably and might lead to overfitting. As such, we will aim to reduce them to a more manageable number.
+
+First, we can disregard both the time data, as it would make the model too complex, the data about the users, as it might make the model more prone to overfitting. 
+
+After that, we create a correlation matrix to reduce the number of variables to those that provide the most information with a criterion of those that have an r=0.75 as ones that can be safely disregarded.
+
+```{r message=FALSE}
+#Transformation of the Training Data Set
+library(dplyr)
+trainDF<-training[,-(1:7)]
+for(i in 1:153){
+  trainDF[is.na(trainDF[,i]), i]<-0}
+trainDF<-trainDF %>% mutate_if(is.character, as.factor)
+trainy<-trainDF[,153]
+traincor<-trainDF[,1:152]
+traincor<-traincor %>% mutate_if(is.factor, as.numeric)
+#First feature reduction of the Training data set
+correlationMatrix <- cor(traincor)
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.75)
+trainprun<-traincor[,-highlyCorrelated]
+```
+
+This leaves us with 83 predictors. Still far too much and too computationally demanding for the planned model, as such we will use the vfe function of the randomForest package, that by itself does some form of cross validation, to arrive at the 20 more relevant predictors for a forest model. As the function is far too computationally demanded, the results will be loaded and the code added into the apendix
+
+The number 20 is a bit arbitrary as can be shown in the text table. 
+```{r}
+##Second feature reduction of the Training data set
+load("results.RData")
+plot(results)
+
+```
+
+As a table is far too big, here is a plot to show how the accuracy improves with the variables, at 8 variables we arrive at 0.95 accuracy, which is acceptable, but foreseeing that this will drop, I picked 20 arbitrarily anyway, as it gets to 0.985 so if we expect a 0.3 drop in accuracy, we still get to 0.95. This might leaad to overfitting but such issues will be dealt with in the test set.
+
+## Training Model
+
+A random forest approach was selected, as this was a task to differenciate different factors that might not necessarily show a linear relationship, as such a decision tree would likely be more effective. Forests were chosen due to the fact that bootstrapping and crossvalidation come baked into the assumptions of the model. Again, due to the computationally demanding nature of the task, we will load it once again. 
+
+```{r}
+#Training of the two different models
+#Random Forest
+load("forestfit.RData")
+trainp<-predict(forestfit, training) 
+
+#Testing the models in the training data set
+confusionMatrix(trainp, trainy)
+```
+
+This give us an accuracy of 0.998 which might indicate a great degree of overfitting, but we have the testing data set for that.
+
+
+## Results
+
+```{r}
+#Transformation of the Test Data Set
+testDF<-testing[,-(1:7)]
+for(i in 1:153){
+  testDF[is.na(testDF[,i]), i]<-0}
+testDF<-testDF %>% mutate_if(is.character, as.factor)
+testy<-testDF[,153]
+testcor<-testDF[,1:152]
+testcor<-testcor %>% mutate_if(is.factor, as.numeric)
+
+#Test set
+test<-predict(forestfit, testing)
+confusionMatrix(test, testy)
+```
+
+And so, running it into the testing set, it gives un an accuracy of 0.95, so a 0.3 drop as expected. Our expected out of sample error ranges from, with a 95% confidence between:
+```{r}
+1-c(0.9479, 0.9612)
+```
+
+## References
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. *Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)* . Stuttgart, Germany: ACM SIGCHI, 2013
+## Apendix
+
+```{r, echo=TRUE, eval=FALSE}
+library(caret)
+library(randomForest)
+library(dplyr)
+
+#The code to obtain the data set
+trainURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(trainURL, destfile="./pml-training.csv", method="curl")
+download.file(testURL, destfile="./pml-testing.csv", method="curl")
+
+#Splitting
+set.seed(32678)
+set1<-read.csv("pml-training.csv", header=T, na.strings=c("","NA"), stringsAsFactors = FALSE) 
+validation<-read.csv("pml-testing.csv", header=T, na.strings=c("","NA"), stringsAsFactors = FALSE)
+inTrain<-createDataPartition(y=set1$classe, p=0.8, list=FALSE)
+training<-set1[inTrain,]
+testing<-set1[-inTrain,]
+
+#Exploratory Analysis
+
+table(training$classe)
+table(training$user_name)
+
+#Transformation of the Training Data Set
+trainDF<-training[,-(1:7)]
+for(i in 1:153){
+  trainDF[is.na(trainDF[,i]), i]<-0}
+trainDF<-trainDF %>% mutate_if(is.character, as.factor)
+trainy<-trainDF[,153]
+traincor<-trainDF[,1:152]
+traincor<-traincor %>% mutate_if(is.factor, as.numeric)
+
+#Transformation of the Test Data Set
+testDF<-testing[,-(1:7)]
+for(i in 1:153){
+  testDF[is.na(testDF[,i]), i]<-0}
+testDF<-testDF %>% mutate_if(is.character, as.factor)
+testy<-testDF[,153]
+testcor<-testDF[,1:152]
+testcor<-testcor %>% mutate_if(is.factor, as.numeric)
+
+#Transformation of the Validation Data Set
+
+valDF<-validation[,-(1:7)]
+for(i in 1:153){
+  valDF[is.na(testDF[,i]), i]<-0}
+valDF<-valDF %>% mutate_if(is.character, as.factor)
+valcor<-valDF[,1:152]
+valcor<-valcor %>% mutate_if(is.factor, as.numeric)
+
+#First feature reduction of the Training data set
+correlationMatrix <- cor(traincor)
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.75)
+trainprun<-traincor[,-highlyCorrelated]
+
+##Second feature reduction of the Training data set
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+# run the RFE algorithm
+traintree<-data.frame(trainprun, y=trainy)
+results <- rfe(traintree[,1:83], traintree[,84], sizes=c(1:20), rfeControl=control)
+
+#Training of the two different models
+#Random Forest
+trainforest<-trainprun[,predictors(results)[1:20]]
+trainForest<-data.frame(trainforest, y=trainy)
+forestfit<-train(y~., method="rf", data=trainForest)
+trainp<-predict(forestfit, training) 
+
+#Testing the models in the training data set
+confusionMatrix(trainp, trainy)
+
+#Test set
+test<-predict(forestfit, testing)
+confusionMatrix(test, testy)
+
+#The code for loading and saving the model
+
+save(forestfit, file = "forestfit.RData")
+save(results, file="results.RData")
+
+load("forestfit.RData")
+load("results.RData")
+
+
+
+```
+
